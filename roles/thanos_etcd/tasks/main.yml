@@ -1,0 +1,59 @@
+- name: prepare some dirs
+  file: name={{ item }} state=directory
+  with_items:
+  - "{{ CA_DIR }}"
+  - "{{ ETCD_CA_DIR }}"    # etcd 证书目录
+  - "/var/lib/etcd"    # etcd 工作目录
+
+- name: 下载etcd二进制文件
+  copy: src={{ WORK_DIR }}/bin/{{ item }} dest={{ BIN_DIR }}/{{ item }} mode=0755
+  with_items:
+  - etcd
+  - etcdctl
+  tags: upgrade_etcd
+
+- name: 分发证书相关
+  copy: src={{ role_path }}/../thanos_auth/files/{{ K8S_MASTER_DOMAIN }}/{{ item }} dest={{ CA_DIR }}/{{ item }}
+  with_items:
+  - ca.pem
+  - ca-key.pem
+  - config.json
+
+#- name: 创建etcd证书请求
+#  template: src=etcd-csr.json.j2 dest=/etc/etcd/ssl/etcd-csr.json
+#
+#- name: 创建 etcd证书和私钥
+#  shell: "cd /etc/etcd/ssl && {{ BIN_DIR }}/cfssl gencert \
+#        -ca={{ CA_DIR }}/ca.pem \
+#        -ca-key={{ CA_DIR }}/ca-key.pem \
+#        -config={{ CA_DIR }}/ca-config.json \
+#        -profile=kubernetes etcd-csr.json | {{ BIN_DIR }}/cfssljson -bare etcd"
+- name: �~Fetcd�~A书�~O~Q�~C�~H��~J~B�~B�
+  copy:
+    src: "{{ role_path }}/../thanos_auth/files/{{ K8S_MASTER_DOMAIN }}/{{ item }}"
+    dest: "{{ ETCD_CA_DIR }}"
+  with_items:
+    - etcd.pem
+    - etcd-key.pem
+    - ca.pem
+
+- name: 创建etcd的systemd unit文件
+  template: src=etcd.service.j2 dest={{ SYSTEM_DIR }}/etcd.service
+  tags: upgrade_etcd
+
+- name: 开机启用etcd服务
+  shell: systemctl enable etcd
+  ignore_errors: true
+
+- name: 开启etcd服务
+  shell: systemctl daemon-reload && systemctl restart etcd
+  ignore_errors: true
+  tags: upgrade_etcd
+
+- name: 以轮询的方式等待服务同步完成
+  shell: "systemctl status etcd.service|grep Active"
+  register: etcd_status
+  until: '"running" in etcd_status.stdout'
+  retries: 8
+  delay: 8
+  tags: upgrade_etcd

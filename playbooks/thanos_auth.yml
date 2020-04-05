@@ -1,0 +1,7 @@
+---
+- name: Auth
+  become: true
+  hosts: localhost
+  connection: local
+  roles:
+    - thanos_auth

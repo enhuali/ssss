@@ -1,0 +1,19 @@
+# Etcd
+ETCD_PEER_URL_SCHEME: https
+ETCD_DATA_DIR: /search/data/etcd
+ETCD_CONF_DIR: /etc/etcd
+ETCD_VERSION: v3.3.12
+ETCD_PEER_GROUP: etcd
+ETCD_PEER_PORT: 2380
+ETCD_CLIENT_PORT: 2379
+ETCD_PEER_CA_FILE: "{{ CA_DIR }}/ca.pem"
+ETCD_PEER_CERT_FILE: "{{ CA_DIR }}/kubernetes.pem"
+ETCD_PEER_KEY_FILE: "{{ CA_DIR}}/kubernetes-key.pem"
+ETCD_CA_DIR: /etc/etcd/ssl
+
+# etcd 集群间通信的IP和端口, 根据etcd组成员自动生成
+TMP_NODES: "{% for h in groups['etcd'] %}{{ hostvars[h]['NODE_NAME'] }}=https://{{ h }}:2380,{% endfor %}"
+ETCD_NODES: "{{ TMP_NODES.rstrip(',') }}"
+
+# etcd 集群初始状态 new/existing
+CLUSTER_STATE: "new"

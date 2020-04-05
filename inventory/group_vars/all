@@ -1,0 +1,23 @@
+---
+WORK_DIR: "/search/lienhua/kernel-upgrade"
+BIN_DIR: "/usr/bin"
+
+K8S_MASTER_DOMAIN: "leh.master.thanos.com"
+KUBE_APISERVER: "{{ K8S_MASTER_DOMAIN }}:6443"
+
+
+MASTER_PEER_GROUP: kube-master
+SSL_CONFIG:
+  IP_LIST:
+    - 127.0.0.1
+    - 172.19.0.1
+    - "{{ K8S_MASTER_DOMAIN }}"
+  DNS:
+    - kubernetes
+    - kubernetes.default
+    - kubernetes.default.svc
+    - kubernetes.default.svc.cluster
+    - kubernetes.default.svc.cluster.local
+
+SYSTEM_DIR: /usr/lib/systemd/system
+CA_DIR: /etc/kubernetes/ssl

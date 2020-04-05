@@ -1,0 +1,97 @@
+- name: 检查目录在不在
+  stat: 
+    path: "{{ role_path }}/files/{{ K8S_MASTER_DOMAIN }}"
+  register: k8s_master_domain
+
+- name: 已经被使用,错误推出
+  fail:
+    msg: "K8s master domain已存在,错误退出"
+  when: k8s_master_domain.stat.exists
+
+- name: 创建存放证书的目录
+  local_action:
+    module: file
+    path: "{{ role_path }}/files/{{ K8S_MASTER_DOMAIN }}/ssl"
+    state: directory
+  
+- name: 拷贝一份admin-{{ K8S_MASTER_DOMAIN }}-csr.json
+  copy:
+    src: "{{ role_path }}/templates/admin-csr.json.j2"
+    dest: "{{ role_path }}/templates/admin-{{ K8S_MASTER_DOMAIN }}-csr.json.j2"
+
+- name: 修改内容
+  lineinfile:
+    path: "{{ role_path }}/templates/admin-{{ K8S_MASTER_DOMAIN }}-csr.json.j2"
+    regexp: '  "CN": "admin",'
+    line: '  "CN": "admin-{{ K8S_MASTER_DOMAIN }}",'
+    backup: yes
+    create: no
+
+- name: token
+  shell: "head -c 16 /dev/urandom | od -An -t x | tr -d ' '"
+  register: bootstrap_token
+
+- name: 将csr文件移动到目录
+  local_action:
+    module: template
+    src: "{{ item }}.j2"
+    dest: "{{ role_path }}/files/{{ K8S_MASTER_DOMAIN }}/{{ item }}"
+  with_items:
+    - admin-csr.json
+    - admin-{{ K8S_MASTER_DOMAIN }}-csr.json
+    - controller-manager-csr.json
+    - dashboard-viewonly-csr.json
+    - kubelet-csr.json
+    - kubernetes-csr.json
+    - config.json
+    - csr.json
+    - etcd-csr.json
+    - kube-proxy-csr.json
+    - scheduler-csr.json
+    - etcd-csr.json
+    - token.csv
+
+- name: 检查证书存在不
+  stat: path={{ role_path }}/files/{{ K8S_MASTER_DOMAIN }}/ca-key.pem
+  register: ca_key_stat
+
+- name: 生成Kubernetes证书
+  when: not ca_key_stat.stat.exists
+  shell: "{{ item }}"
+  args:
+    chdir: "{{ role_path }}/files/{{ K8S_MASTER_DOMAIN }}"
+  with_items:
+    - "{{ WORK_DIR }}/bin/cfssl gencert -initca csr.json | {{ WORK_DIR }}/bin/cfssljson -bare ca"
+    - "{{ WORK_DIR }}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=config.json -profile=kubernetes admin-csr.json | {{ WORK_DIR }}/bin/cfssljson -bare admin"
+    - "{{ WORK_DIR }}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=config.json -profile=kubernetes kubernetes-csr.json | {{ WORK_DIR }}/bin/cfssljson -bare kubernetes"
+    - "{{ WORK_DIR }}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=config.json -profile=kubernetes controller-manager-csr.json | {{ WORK_DIR }}/bin/cfssljson -bare controller-manager"
+    - "{{ WORK_DIR }}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=config.json -profile=kubernetes scheduler-csr.json | {{ WORK_DIR }}/bin/cfssljson -bare scheduler"
+    - "{{ WORK_DIR }}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=config.json -profile=kubernetes kube-proxy-csr.json | {{ WORK_DIR }}/bin/cfssljson -bare kube-proxy"
+    - "{{ WORK_DIR }}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=config.json -profile=kubernetes etcd-csr.json | {{ WORK_DIR }}/bin/cfssljson -bare etcd"
+    - "{{ WORK_DIR }}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=config.json -profile=kubernetes dashboard-viewonly-csr.json | {{ WORK_DIR }}/bin/cfssljson -bare dashboard-viewonly"
+    - "{{ WORK_DIR }}/bin/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=config.json -profile=kubernetes admin-{{ K8S_MASTER_DOMAIN }}-csr.json | {{ WORK_DIR }}/bin/cfssljson -bare admin-{{ K8S_MASTER_DOMAIN }}"
+    - "openssl pkcs12 -export -in admin-{{ K8S_MASTER_DOMAIN }}.pem -out admin-{{ K8S_MASTER_DOMAIN }}.p12 -inkey admin-{{ K8S_MASTER_DOMAIN }}-key.pem -passout pass:thanos"
+    - "{{ WORK_DIR }}/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server={{ KUBE_APISERVER }} --kubeconfig=kubectl.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-credentials admin --client-certificate=admin.pem --embed-certs=true --client-key=admin-key.pem --kubeconfig=kubectl.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-context kubernetes --cluster=kubernetes --user=admin --kubeconfig=kubectl.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config use-context kubernetes --kubeconfig=kubectl.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server={{ KUBE_APISERVER }} --kubeconfig=controller-manager.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-credentials system:kube-controller-manager --client-certificate=controller-manager.pem --client-key=controller-manager-key.pem --embed-certs=true --kubeconfig=controller-manager.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-context default --cluster=kubernetes --user=system:kube-controller-manager --kubeconfig=controller-manager.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config use-context default --kubeconfig=controller-manager.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server={{ KUBE_APISERVER }} --kubeconfig=scheduler.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-credentials system:kube-scheduler --client-certificate=scheduler.pem --client-key=scheduler-key.pem --embed-certs=true --kubeconfig=scheduler.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-context default --cluster=kubernetes --user=system:kube-scheduler --kubeconfig=scheduler.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config use-context default --kubeconfig=scheduler.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server={{ KUBE_APISERVER }} --kubeconfig=bootstrap.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-credentials kubelet-bootstrap --token={{ bootstrap_token.stdout }} --kubeconfig=bootstrap.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-context default --cluster=kubernetes --user=kubelet-bootstrap --kubeconfig=bootstrap.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config use-context default --kubeconfig=bootstrap.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server={{ KUBE_APISERVER }} --kubeconfig=kube-proxy.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-credentials kube-proxy --client-certificate=kube-proxy.pem --client-key=kube-proxy-key.pem --embed-certs=true --kubeconfig=kube-proxy.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-context default --cluster=kubernetes --user=kube-proxy --kubeconfig=kube-proxy.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config use-context default --kubeconfig=kube-proxy.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-cluster kubernetes --certificate-authority=ca.pem --embed-certs=true --server={{ KUBE_APISERVER }} --kubeconfig=dashboard-viewonly.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-credentials dashboard-viewonly --client-certificate=dashboard-viewonly.pem --embed-certs=true --client-key=dashboard-viewonly-key.pem --kubeconfig=dashboard-viewonly.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config set-context kubernetes --cluster=kubernetes --user=dashboard-viewonly --kubeconfig=dashboard-viewonly.kubeconfig"
+    - "{{ WORK_DIR }}/bin/kubectl config use-context kubernetes --kubeconfig=dashboard-viewonly.kubeconfig"

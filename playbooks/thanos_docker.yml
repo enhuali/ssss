@@ -1,0 +1,10 @@
+---
+- name: Deploy docker
+  hosts: 
+    - kube-master
+    - kube-node
+  become: true
+  roles:
+    - thanos_docker
+  tags:
+    - docker

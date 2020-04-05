@@ -1,0 +1,2 @@
+---
+KUBERNETES_BIN_DIR: "/opt/kube/bin"
